@@ -1,0 +1,3 @@
+test MissingSemicolon {
+  GET "/x" expect status = 200;
+}

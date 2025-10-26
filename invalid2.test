@@ -1,0 +1,6 @@
+test InvalidBody {
+  POST "/x" {
+    body = 123;
+  }
+  expect status = 200;
+}

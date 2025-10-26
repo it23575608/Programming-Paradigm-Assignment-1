@@ -1,0 +1,271 @@
+package testlangcompiler;
+
+import java_cup.runtime.*;
+import java.util.*;
+
+parser code {:
+  public static class CompilationUnit {
+    public ConfigData config;
+    public Map<String, Variable> variables = new LinkedHashMap<>();
+    public List<TestCase> testMethods = new ArrayList<>();
+  }
+  
+  public static class ConfigData {
+    public String baseUrl;
+    public Map<String, String> defaultHeaders = new LinkedHashMap<>();
+  }
+  
+  public static class Variable {
+    public String name;
+    public String value;
+    public boolean isString;
+    
+    public Variable(String n, String v, boolean isStr) {
+      name = n;
+      value = v;
+      isString = isStr;
+    }
+  }
+  
+  public static class HttpRequest {
+    public String method;
+    public String path;
+    public String body;
+    public Map<String, String> headers = new LinkedHashMap<>();
+    
+    public HttpRequest(String m, String p) {
+      method = m;
+      path = p;
+    }
+  }
+  
+  public static class Assertion {
+    public String type;
+    public Object expected;
+    public String expectedStr;
+    
+    public Assertion(String t, Object exp, String expStr) {
+      type = t;
+      expected = exp;
+      expectedStr = expStr;
+    }
+  }
+  
+  public static class TestCase {
+    public String name;
+    public List<HttpRequest> requests = new ArrayList<>();
+    public List<Assertion> assertions = new ArrayList<>();
+    
+    public TestCase(String n) {
+      name = n;
+    }
+  }
+:}
+
+terminal STRING, NUMBER, IDENTIFIER;
+terminal LPAREN, RPAREN, LBRACE, RBRACE, SEMICOLON, EQ, DOT, DOTDOT;
+terminal CONFIG, BASE_URL, HEADER, LET, TEST;
+terminal GET, POST, PUT, DELETE;
+terminal EXPECT, STATUS, BODY, CONTAINS;
+
+non terminal CompilationUnit, ConfigData, LetList, TestList, TestCase, TestSteps;
+non terminal HttpRequest, RequestBlock, Assertion;
+
+start with CompilationUnit;
+
+CompilationUnit ::= CONFIG LBRACE ConfigData:c RBRACE LetList:l TestList:t
+                    {: 
+                      CompilationUnit unit = new CompilationUnit();
+                      unit.config = c;
+                      unit.variables = l;
+                      unit.testMethods = t;
+                      RESULT = unit;
+                    :}
+                  | LetList:l TestList:t
+                    {: 
+                      CompilationUnit unit = new CompilationUnit();
+                      unit.variables = l;
+                      unit.testMethods = t;
+                      RESULT = unit;
+                    :}
+                  ;
+
+ConfigData ::= BASE_URL EQ STRING:s SEMICOLON
+               {: 
+                 ConfigData config = new ConfigData();
+                 config.baseUrl = (String)s.value;
+                 RESULT = config;
+               :}
+             | HEADER STRING:k EQ STRING:v SEMICOLON
+               {: 
+                 ConfigData config = new ConfigData();
+                 config.defaultHeaders.put((String)k.value, (String)v.value);
+                 RESULT = config;
+               :}
+             | ConfigData:c BASE_URL EQ STRING:s SEMICOLON
+               {: 
+                 c.baseUrl = (String)s.value;
+                 RESULT = c;
+               :}
+             | ConfigData:c HEADER STRING:k EQ STRING:v SEMICOLON
+               {: 
+                 c.defaultHeaders.put((String)k.value, (String)v.value);
+                 RESULT = c;
+               :}
+             ;
+
+LetList ::= LET IDENTIFIER:name EQ (STRING | NUMBER):value SEMICOLON LetList:list
+            {: 
+              Map<String, Variable> vars = (Map<String, Variable>)list;
+              if (vars == null) vars = new LinkedHashMap<>();
+              String n = (String)name.value;
+              String v = (String)value.value;
+              boolean isStr = value.sym == sym.STRING;
+              vars.put(n, new Variable(n, v, isStr));
+              RESULT = vars;
+            :}
+          | {: RESULT = null; :}
+          ;
+
+TestList ::= TEST IDENTIFIER:name LBRACE TestSteps:s RBRACE TestList:list
+             {: 
+               List<TestCase> tests = (List<TestCase>)list;
+               if (tests == null) tests = new ArrayList<>();
+               TestCase tc = new TestCase((String)name.value);
+               if (s instanceof List) {
+                 List<Object> steps = (List<Object>)s;
+                 for (Object step : steps) {
+                   if (step instanceof HttpRequest) {
+                     tc.requests.add((HttpRequest)step);
+                   } else if (step instanceof Assertion) {
+                     tc.assertions.add((Assertion)step);
+                   }
+                 }
+               }
+               tests.add(tc);
+               RESULT = tests;
+             :}
+           | {: RESULT = new ArrayList<>(); :}
+           ;
+
+TestSteps ::= TestSteps:list HttpRequest:req
+              {: 
+                List<Object> steps = (List<Object>)list;
+                if (steps == null) steps = new ArrayList<>();
+                steps.add(req);
+                RESULT = steps;
+              :}
+            | TestSteps:list Assertion:a
+              {: 
+                List<Object> steps = (List<Object>)list;
+                if (steps == null) steps = new ArrayList<>();
+                steps.add(a);
+                RESULT = steps;
+              :}
+            | {: RESULT = new ArrayList<>(); :}
+            ;
+
+HttpRequest ::= GET STRING:path SEMICOLON
+                {: 
+                  HttpRequest req = new HttpRequest("GET", (String)path.value);
+                  RESULT = req;
+                :}
+              | DELETE STRING:path SEMICOLON
+                {: 
+                  HttpRequest req = new HttpRequest("DELETE", (String)path.value);
+                  RESULT = req;
+                :}
+              | POST STRING:path SEMICOLON
+                {: 
+                  HttpRequest req = new HttpRequest("POST", (String)path.value);
+                  RESULT = req;
+                :}
+              | PUT STRING:path SEMICOLON
+                {: 
+                  HttpRequest req = new HttpRequest("PUT", (String)path.value);
+                  RESULT = req;
+                :}
+              | POST STRING:path LBRACE RequestBlock:b RBRACE SEMICOLON
+                {: 
+                  HttpRequest req = new HttpRequest("POST", (String)path.value);
+                  Map<String, Object> data = (Map<String, Object>)b;
+                  if (data != null) {
+                    if (data.containsKey("body")) {
+                      req.body = (String)data.get("body");
+                    }
+                    if (data.containsKey("headers")) {
+                      req.headers.putAll((Map<String, String>)data.get("headers"));
+                    }
+                  }
+                  RESULT = req;
+                :}
+              | PUT STRING:path LBRACE RequestBlock:b RBRACE SEMICOLON
+                {: 
+                  HttpRequest req = new HttpRequest("PUT", (String)path.value);
+                  Map<String, Object> data = (Map<String, Object>)b;
+                  if (data != null) {
+                    if (data.containsKey("body")) {
+                      req.body = (String)data.get("body");
+                    }
+                    if (data.containsKey("headers")) {
+                      req.headers.putAll((Map<String, String>)data.get("headers"));
+                    }
+                  }
+                  RESULT = req;
+                :}
+              ;
+
+RequestBlock ::= HEADER STRING:k EQ STRING:v SEMICOLON
+                  {: 
+                    Map<String, Object> data = new LinkedHashMap<>();
+                    Map<String, String> headers = new LinkedHashMap<>();
+                    headers.put((String)k.value, (String)v.value);
+                    data.put("headers", headers);
+                    RESULT = data;
+                  :}
+                | BODY EQ STRING:v SEMICOLON
+                  {: 
+                    Map<String, Object> data = new LinkedHashMap<>();
+                    data.put("body", (String)v.value);
+                    RESULT = data;
+                  :}
+                | RequestBlock:block HEADER STRING:k EQ STRING:v SEMICOLON
+                  {: 
+                    Map<String, Object> data = (Map<String, Object>)block;
+                    if (!data.containsKey("headers")) {
+                      data.put("headers", new LinkedHashMap<String, String>());
+                    }
+                    ((Map<String, String>)data.get("headers")).put((String)k.value, (String)v.value);
+                    RESULT = data;
+                  :}
+                | RequestBlock:block BODY EQ STRING:v SEMICOLON
+                  {: 
+                    Map<String, Object> data = (Map<String, Object>)block;
+                    data.put("body", (String)v.value);
+                    RESULT = data;
+                  :}
+                | {: RESULT = null; :}
+                ;
+
+Assertion ::= EXPECT STATUS EQ NUMBER:n SEMICOLON
+              {: 
+                Assertion a = new Assertion("status", n.value, null);
+                RESULT = a;
+              :}
+            | EXPECT HEADER STRING:k EQ STRING:v SEMICOLON
+              {: 
+                Assertion a = new Assertion("header_equals", k.value, (String)v.value);
+                RESULT = a;
+              :}
+            | EXPECT HEADER STRING:k CONTAINS STRING:v SEMICOLON
+              {: 
+                Assertion a = new Assertion("header_contains", k.value, (String)v.value);
+                RESULT = a;
+              :}
+            | EXPECT BODY CONTAINS STRING:v SEMICOLON
+              {: 
+                Assertion a = new Assertion("body_contains", null, (String)v.value);
+                RESULT = a;
+              :}
+            ;
+

@@ -1,0 +1,4 @@
+test InvalidStatus {
+  GET "/x";
+  expect status = "200";
+}
